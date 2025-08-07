@@ -113,7 +113,7 @@ pub fn get_current_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, _con
     })
 }
 
-/// Set a custom DNS server for a specific client IP
+/// Set a custom DNS server for a specific client IP by creating a static lease
 pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevice>>, config: Arc<Config>) -> Result<(), Box<dyn std::error::Error>> {
     let rt = Runtime::new()?;
     
@@ -121,41 +121,56 @@ pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevi
         // Lock the device for this operation
         let device = device.lock().map_err(|e| format!("Failed to acquire device lock: {}", e))?;
         
-        // First, try to find existing DHCP lease for this client
+        // First, check if there's already a static lease managed by us
         let search_command = CommandBuilder::new()
             .command("/ip/dhcp-server/lease/print")
-            .attribute("where", Some(&format!("address={}", client_ip)))
             .build();
         
-        println!("Searching for existing DHCP lease for client: {}", client_ip);
+        println!("Searching for existing managed static lease for client: {}", client_ip);
         let mut response_rx = device.send_command(search_command).await;
         
-        let mut lease_id = String::new();
-        let mut lease_found = false;
+        let mut existing_lease_id = String::new();
+        let mut managed_lease_found = false;
+        let mut has_dynamic_lease = false;
+        let mut dynamic_lease_mac = String::new();
         
-        // Read responses to find existing lease
+        // Read responses to find existing managed lease or dynamic lease
         while let Some(response) = response_rx.recv().await {
             match response {
                 Ok(CommandResponse::Reply(reply)) => {
-                    println!("Found existing lease: {:?}", reply.attributes);
-                    
-                    // Verify this lease actually matches our client IP
                     if let Some(lease_address) = reply.attributes.get("address") {
                         if let Some(addr) = lease_address {
-                            println!("Checking lease address: {} vs client: {}", addr, client_ip);
                             if addr == client_ip {
-                                lease_found = true;
-                                println!("MATCH: Found lease for client {}", client_ip);
-                                
-                                // Get the lease ID
-                                if let Some(id_value) = reply.attributes.get(".id") {
-                                    if let Some(id) = id_value {
-                                        lease_id = id.clone();
-                                        println!("Got lease ID: {}", lease_id);
+                                // Check if this is our managed static lease
+                                if let Some(comment) = reply.attributes.get("comment") {
+                                    if let Some(comment_text) = comment {
+                                        if comment_text == &config.app_comment {
+                                            // This is our managed static lease
+                                            managed_lease_found = true;
+                                            if let Some(id_value) = reply.attributes.get(".id") {
+                                                if let Some(id) = id_value {
+                                                    existing_lease_id = id.clone();
+                                                    println!("Found managed static lease ID: {}", existing_lease_id);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
-                            } else {
-                                println!("NO MATCH: Lease {} != client {}", addr, client_ip);
+                                
+                                // Check if this is a dynamic lease
+                                if let Some(dynamic) = reply.attributes.get("dynamic") {
+                                    if let Some(is_dynamic) = dynamic {
+                                        if is_dynamic == "true" {
+                                            has_dynamic_lease = true;
+                                            if let Some(mac) = reply.attributes.get("mac-address") {
+                                                if let Some(mac_addr) = mac {
+                                                    dynamic_lease_mac = mac_addr.clone();
+                                                    println!("Found dynamic lease for {} with MAC: {}", client_ip, dynamic_lease_mac);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -164,7 +179,7 @@ pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevi
                     break;
                 }
                 Ok(CommandResponse::Trap(trap)) => {
-                    return Err(format!("Error searching DHCP leases: {}", trap.message).into());
+                    return Err(format!("Error searching leases: {}", trap.message).into());
                 }
                 Ok(CommandResponse::Fatal(reason)) => {
                     return Err(format!("Fatal error: {}", reason).into());
@@ -175,188 +190,69 @@ pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevi
             }
         }
         
-        if lease_found && !lease_id.is_empty() {
-            // Get full lease details to check if it's manageable
-            println!("Querying lease details for ID: {}", lease_id);
-            let lease_check_command = CommandBuilder::new()
-                .command("/ip/dhcp-server/lease/print")
-                .attribute(".id", Some(&lease_id))
-                .build();
-            
-            let mut response_rx = device.send_command(lease_check_command).await;
-            let mut existing_option = String::new();
-            let mut lease_comment = String::new();
-            let mut is_dynamic = false;
-            
-            while let Some(response) = response_rx.recv().await {
-                match response {
-                    Ok(CommandResponse::Reply(reply)) => {
-                        println!("Lease details for conflict check: {:?}", reply.attributes);
-                        if let Some(option_value) = reply.attributes.get("dhcp-option") {
-                            if let Some(option) = option_value {
-                                existing_option = option.clone();
-                                println!("Found existing option: {}", existing_option);
-                            }
-                        }
-                        if let Some(comment_value) = reply.attributes.get("comment") {
-                            if let Some(comment) = comment_value {
-                                lease_comment = comment.clone();
-                                println!("Found lease comment: {}", lease_comment);
-                            }
-                        }
-                        if let Some(dynamic_value) = reply.attributes.get("dynamic") {
-                            if let Some(dynamic) = dynamic_value {
-                                is_dynamic = dynamic == "true";
-                                println!("Lease is_dynamic: {} (raw: {})", is_dynamic, dynamic);
-                            }
-                        }
-                    }
-                    Ok(CommandResponse::Done(_)) => break,
-                    _ => {}
+        // Create or update DHCP option for DNS
+        let option_name = format!("dns-{}", client_ip.replace(".", "-"));
+        
+        // Try to create the option first
+        let option_command = CommandBuilder::new()
+            .command("/ip/dhcp-server/option/add")
+            .attribute("name", Some(&option_name))
+            .attribute("code", Some("6"))  // DNS server option code
+            .attribute("value", Some(&format!("'{}'", dns_server)))
+            .attribute("comment", Some(&config.app_comment))
+            .build();
+        
+        let mut response_rx = device.send_command(option_command).await;
+        
+        while let Some(response) = response_rx.recv().await {
+            match response {
+                Ok(CommandResponse::Done(_)) => {
+                    println!("DNS option created successfully");
+                    break;
                 }
-            }
-            
-            println!("Final values - is_dynamic: {}, lease_comment: '{}', APP_COMMENT: '{}'", is_dynamic, lease_comment, config.app_comment);
-            
-            // Check if this is a static lease not managed by us
-            if !is_dynamic && !lease_comment.is_empty() && lease_comment != config.app_comment {
-                println!("CONFLICT DETECTED: Static lease with external comment");
-                return Err(format!("Client {} has a static lease with comment '{}' that is not managed by DNS-Switcher. Cannot modify externally managed static leases.", client_ip, lease_comment).into());
-            }
-            
-            // If there's an existing DHCP option, check if it's managed by us
-            if !existing_option.is_empty() {
-                let expected_option_name = format!("dns-{}", client_ip.replace(".", "-"));
-                if existing_option != expected_option_name {
-                    // Check if this option has our management comment
-                    let option_check_command = CommandBuilder::new()
-                        .command("/ip/dhcp-server/option/print")
-                        .attribute("where", Some(&format!("name={}", existing_option)))
+                Ok(CommandResponse::Trap(trap)) => {
+                    // Option might already exist, try to update it
+                    println!("Option exists, updating: {}", trap.message);
+                    
+                    let update_option_command = CommandBuilder::new()
+                        .command("/ip/dhcp-server/option/set")
+                        .attribute("numbers", Some(&option_name))
+                        .attribute("value", Some(&format!("'{}'", dns_server)))
                         .build();
                     
-                    let mut response_rx = device.send_command(option_check_command).await;
-                    let mut is_managed_by_us = false;
-                    
-                    while let Some(response) = response_rx.recv().await {
-                        match response {
-                            Ok(CommandResponse::Reply(reply)) => {
-                                if let Some(comment) = reply.attributes.get("comment") {
-                                    if let Some(comment_value) = comment {
-                                        if comment_value == &config.app_comment {
-                                            is_managed_by_us = true;
-                                        }
-                                    }
-                                }
+                    let mut update_rx = device.send_command(update_option_command).await;
+                    while let Some(update_response) = update_rx.recv().await {
+                        match update_response {
+                            Ok(CommandResponse::Done(_)) => {
+                                println!("DNS option updated successfully");
+                                break;
                             }
-                            Ok(CommandResponse::Done(_)) => break,
+                            Ok(CommandResponse::Trap(update_trap)) => {
+                                return Err(format!("Error updating DNS option: {}", update_trap.message).into());
+                            }
                             _ => {}
                         }
                     }
-                    
-                    if !is_managed_by_us {
-                        return Err(format!("Client {} already has a custom DNS option '{}' that is not managed by DNS-Switcher. Cannot override it.", client_ip, existing_option).into());
-                    }
+                    break;
                 }
+                Ok(CommandResponse::Fatal(reason)) => {
+                    return Err(format!("Fatal error creating DNS option: {}", reason).into());
+                }
+                Err(e) => {
+                    return Err(format!("Response error: {}", e).into());
+                }
+                _ => {}
             }
+        }
+        
+        if managed_lease_found && !existing_lease_id.is_empty() {
+            // Update the existing managed static lease
+            println!("Updating existing managed static lease {} with DNS option: {}", existing_lease_id, option_name);
             
-            // If this is a dynamic lease, convert it to static first
-            if is_dynamic {
-                println!("Converting dynamic lease to static for client: {}", client_ip);
-                let make_static_command = CommandBuilder::new()
-                    .command("/ip/dhcp-server/lease/make-static")
-                    .attribute("numbers", Some(&lease_id))
-                    .build();
-                
-                let mut response_rx = device.send_command(make_static_command).await;
-                
-                while let Some(response) = response_rx.recv().await {
-                    match response {
-                        Ok(CommandResponse::Done(_)) => {
-                            println!("Successfully converted lease to static");
-                            break;
-                        }
-                        Ok(CommandResponse::Trap(trap)) => {
-                            return Err(format!("Error converting lease to static: {}", trap.message).into());
-                        }
-                        Ok(CommandResponse::Fatal(reason)) => {
-                            return Err(format!("Fatal error converting lease to static: {}", reason).into());
-                        }
-                        Err(e) => {
-                            return Err(format!("Response error: {}", e).into());
-                        }
-                        _ => {}
-                    }
-                }
-                
-                // Add our management comment to the newly static lease
-                let comment_command = CommandBuilder::new()
-                    .command("/ip/dhcp-server/lease/set")
-                    .attribute("numbers", Some(&lease_id))
-                    .attribute("comment", Some(&config.app_comment))
-                    .build();
-                
-                let mut response_rx = device.send_command(comment_command).await;
-                
-                while let Some(response) = response_rx.recv().await {
-                    match response {
-                        Ok(CommandResponse::Done(_)) => {
-                            println!("Added management comment to static lease");
-                            break;
-                        }
-                        Ok(CommandResponse::Trap(trap)) => {
-                            return Err(format!("Error adding comment to lease: {}", trap.message).into());
-                        }
-                        Ok(CommandResponse::Fatal(reason)) => {
-                            return Err(format!("Fatal error adding comment: {}", reason).into());
-                        }
-                        Err(e) => {
-                            return Err(format!("Response error: {}", e).into());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            
-            // Update existing lease with new DNS
-            println!("Updating existing lease {} with DNS: {}", lease_id, dns_server);
-            
-            // First create a DHCP option for DNS
-            let option_command = CommandBuilder::new()
-                .command("/ip/dhcp-server/option/add")
-                .attribute("name", Some(&format!("dns-{}", client_ip.replace(".", "-"))))
-                .attribute("code", Some("6"))  // DNS server option code
-                .attribute("value", Some(&format!("'{}'", dns_server)))
-                .attribute("comment", Some(&config.app_comment))  // Add our management comment
-                .build();
-            
-            let mut response_rx = device.send_command(option_command).await;
-            
-            while let Some(response) = response_rx.recv().await {
-                match response {
-                    Ok(CommandResponse::Done(_)) => {
-                        println!("DNS option created successfully");
-                        break;
-                    }
-                    Ok(CommandResponse::Trap(trap)) => {
-                        // Option might already exist, continue
-                        println!("Note: {}", trap.message);
-                        break;
-                    }
-                    Ok(CommandResponse::Fatal(reason)) => {
-                        return Err(format!("Fatal error creating DNS option: {}", reason).into());
-                    }
-                    Err(e) => {
-                        return Err(format!("Response error: {}", e).into());
-                    }
-                    _ => {}
-                }
-            }
-            
-            // Update lease with the DNS option
             let update_command = CommandBuilder::new()
                 .command("/ip/dhcp-server/lease/set")
-                .attribute("numbers", Some(&lease_id))
-                .attribute("dhcp-option", Some(&format!("dns-{}", client_ip.replace(".", "-"))))
+                .attribute("numbers", Some(&existing_lease_id))
+                .attribute("dhcp-option", Some(&option_name))
                 .build();
             
             let mut response_rx = device.send_command(update_command).await;
@@ -364,11 +260,11 @@ pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevi
             while let Some(response) = response_rx.recv().await {
                 match response {
                     Ok(CommandResponse::Done(_)) => {
-                        println!("DHCP lease updated successfully for {} with DNS: {}", client_ip, dns_server);
+                        println!("Static lease updated successfully for {} with DNS: {}", client_ip, dns_server);
                         return Ok(());
                     }
                     Ok(CommandResponse::Trap(trap)) => {
-                        return Err(format!("Error updating DHCP lease: {}", trap.message).into());
+                        return Err(format!("Error updating static lease: {}", trap.message).into());
                     }
                     Ok(CommandResponse::Fatal(reason)) => {
                         return Err(format!("Fatal error: {}", reason).into());
@@ -380,14 +276,49 @@ pub fn set_dns(client_ip: &str, dns_server: &str, device: Arc<Mutex<MikrotikDevi
                 }
             }
         } else {
-            return Err(format!("No DHCP lease found for client IP: {}. Client must have a DHCP lease to set custom DNS.", client_ip).into());
+            // Need to create a new static lease
+            println!("Creating new static lease for client: {}", client_ip);
+            
+            let mut create_command = CommandBuilder::new()
+                .command("/ip/dhcp-server/lease/add")
+                .attribute("address", Some(client_ip))
+                .attribute("dhcp-option", Some(&option_name))
+                .attribute("comment", Some(&config.app_comment));
+            
+            // If we found a dynamic lease, use its MAC address for the static lease
+            if has_dynamic_lease && !dynamic_lease_mac.is_empty() {
+                println!("Using MAC address from dynamic lease: {}", dynamic_lease_mac);
+                create_command = create_command.attribute("mac-address", Some(&dynamic_lease_mac));
+            }
+            
+            let command = create_command.build();
+            let mut response_rx = device.send_command(command).await;
+            
+            while let Some(response) = response_rx.recv().await {
+                match response {
+                    Ok(CommandResponse::Done(_)) => {
+                        println!("Static lease created successfully for {} with DNS: {}", client_ip, dns_server);
+                        return Ok(());
+                    }
+                    Ok(CommandResponse::Trap(trap)) => {
+                        return Err(format!("Error creating static lease: {}", trap.message).into());
+                    }
+                    Ok(CommandResponse::Fatal(reason)) => {
+                        return Err(format!("Fatal error: {}", reason).into());
+                    }
+                    Err(e) => {
+                        return Err(format!("Response error: {}", e).into());
+                    }
+                    _ => {}
+                }
+            }
         }
         
         Ok(())
     })
 }
 
-/// Remove custom DNS for a specific client IP (revert to default)
+/// Remove custom DNS for a specific client IP (revert to default) by removing the static lease
 pub fn remove_custom_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, config: Arc<Config>) -> Result<(), Box<dyn std::error::Error>> {
     let rt = Runtime::new()?;
     
@@ -395,33 +326,30 @@ pub fn remove_custom_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, co
         // Lock the device for this operation
         let device = device.lock().map_err(|e| format!("Failed to acquire device lock: {}", e))?;
         
-        // First, find the DHCP lease for this client
+        // Search for static leases managed by us for this client
         let search_command = CommandBuilder::new()
             .command("/ip/dhcp-server/lease/print")
-            .attribute("where", Some(&format!("address={}", client_ip)))
+            .attribute("where", Some(&format!("address={} && comment={}", client_ip, config.app_comment)))
             .build();
         
-        println!("Searching for existing DHCP lease for client: {}", client_ip);
+        println!("Searching for managed static lease for client: {}", client_ip);
         let mut response_rx = device.send_command(search_command).await;
         
         let mut lease_id = String::new();
         let mut current_option = String::new();
-        let mut lease_comment = String::new();
-        let mut lease_found = false;
+        let mut managed_lease_found = false;
         
-        // Read responses to find existing lease
+        // Read responses to find existing managed lease
         while let Some(response) = response_rx.recv().await {
             match response {
                 Ok(CommandResponse::Reply(reply)) => {
-                    println!("Found existing lease: {:?}", reply.attributes);
+                    println!("Found managed lease: {:?}", reply.attributes);
                     
-                    // Verify this lease actually matches our client IP
                     if let Some(lease_address) = reply.attributes.get("address") {
                         if let Some(addr) = lease_address {
                             if addr == client_ip {
-                                lease_found = true;
+                                managed_lease_found = true;
                                 
-                                // Get the lease ID, current DHCP option, and comment
                                 if let Some(id_value) = reply.attributes.get(".id") {
                                     if let Some(id) = id_value {
                                         lease_id = id.clone();
@@ -433,12 +361,6 @@ pub fn remove_custom_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, co
                                         current_option = option.clone();
                                     }
                                 }
-                                
-                                if let Some(comment_value) = reply.attributes.get("comment") {
-                                    if let Some(comment) = comment_value {
-                                        lease_comment = comment.clone();
-                                    }
-                                }
                             }
                         }
                     }
@@ -447,7 +369,7 @@ pub fn remove_custom_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, co
                     break;
                 }
                 Ok(CommandResponse::Trap(trap)) => {
-                    return Err(format!("Error searching DHCP leases: {}", trap.message).into());
+                    return Err(format!("Error searching managed leases: {}", trap.message).into());
                 }
                 Ok(CommandResponse::Fatal(reason)) => {
                     return Err(format!("Fatal error: {}", reason).into());
@@ -458,112 +380,69 @@ pub fn remove_custom_dns(client_ip: &str, device: Arc<Mutex<MikrotikDevice>>, co
             }
         }
         
-        if !lease_found {
-            return Err(format!("No DHCP lease found for client IP: {}", client_ip).into());
+        if !managed_lease_found {
+            // No managed lease found, nothing to remove
+            println!("No managed static lease found for client {}", client_ip);
+            return Ok(());
         }
         
-        // Check if this is a static lease not managed by us
-        if !lease_comment.is_empty() && lease_comment != config.app_comment {
-            return Err(format!("Client {} has a static lease with comment '{}' that is not managed by DNS-Switcher. Cannot modify externally managed static leases.", client_ip, lease_comment).into());
+        // Remove the static lease managed by us
+        println!("Removing managed static lease {} for client {}", lease_id, client_ip);
+        let remove_command = CommandBuilder::new()
+            .command("/ip/dhcp-server/lease/remove")
+            .attribute("numbers", Some(&lease_id))
+            .build();
+        
+        let mut response_rx = device.send_command(remove_command).await;
+        
+        while let Some(response) = response_rx.recv().await {
+            match response {
+                Ok(CommandResponse::Done(_)) => {
+                    println!("Static lease removed successfully for {}", client_ip);
+                    break;
+                }
+                Ok(CommandResponse::Trap(trap)) => {
+                    return Err(format!("Error removing static lease: {}", trap.message).into());
+                }
+                Ok(CommandResponse::Fatal(reason)) => {
+                    return Err(format!("Fatal error: {}", reason).into());
+                }
+                Err(e) => {
+                    return Err(format!("Response error: {}", e).into());
+                }
+                _ => {}
+            }
         }
         
-        if current_option.is_empty() {
-            return Ok(()); // No custom DNS to remove
-        }
-        
-        // Check if the current option is managed by our app
-        let option_name = format!("dns-{}", client_ip.replace(".", "-"));
-        if current_option != option_name {
-            // Check if it's another DNS option not managed by us
-            let option_search_command = CommandBuilder::new()
-                .command("/ip/dhcp-server/option/print")
-                .attribute("where", Some(&format!("name={}", current_option)))
+        // Also remove the DHCP option if it exists
+        if !current_option.is_empty() {
+            println!("Removing DHCP option: {}", current_option);
+            let remove_option_command = CommandBuilder::new()
+                .command("/ip/dhcp-server/option/remove")
+                .attribute("numbers", Some(&current_option))
                 .build();
             
-            let mut response_rx = device.send_command(option_search_command).await;
-            let mut is_managed_by_us = false;
+            let mut response_rx = device.send_command(remove_option_command).await;
             
             while let Some(response) = response_rx.recv().await {
                 match response {
-                    Ok(CommandResponse::Reply(reply)) => {
-                        if let Some(comment) = reply.attributes.get("comment") {
-                            if let Some(comment_value) = comment {
-                                if comment_value == &config.app_comment {
-                                    is_managed_by_us = true;
-                                }
-                            }
-                        }
+                    Ok(CommandResponse::Done(_)) => {
+                        println!("DHCP option {} removed successfully", current_option);
+                        break;
                     }
-                    Ok(CommandResponse::Done(_)) => break,
-                    Ok(CommandResponse::Trap(_)) => break, // Option not found
+                    Ok(CommandResponse::Trap(trap)) => {
+                        // Option might not exist, which is fine
+                        println!("Note removing option: {}", trap.message);
+                        break;
+                    }
                     Ok(CommandResponse::Fatal(reason)) => {
-                        return Err(format!("Fatal error: {}", reason).into());
+                        return Err(format!("Fatal error removing option: {}", reason).into());
                     }
                     Err(e) => {
                         return Err(format!("Response error: {}", e).into());
                     }
+                    _ => {}
                 }
-            }
-            
-            if !is_managed_by_us {
-                return Err(format!("Client {} has a custom DNS option '{}' that is not managed by DNS-Switcher. Cannot remove it.", client_ip, current_option).into());
-            }
-        }
-        
-        // Remove the DHCP option from the lease
-        let update_command = CommandBuilder::new()
-            .command("/ip/dhcp-server/lease/set")
-            .attribute("numbers", Some(&lease_id))
-            .attribute("dhcp-option", Some(""))  // Clear the DHCP option
-            .build();
-        
-        let mut response_rx = device.send_command(update_command).await;
-        
-        while let Some(response) = response_rx.recv().await {
-            match response {
-                Ok(CommandResponse::Done(_)) => {
-                    println!("DHCP option cleared from lease for {}", client_ip);
-                    break;
-                }
-                Ok(CommandResponse::Trap(trap)) => {
-                    return Err(format!("Error updating DHCP lease: {}", trap.message).into());
-                }
-                Ok(CommandResponse::Fatal(reason)) => {
-                    return Err(format!("Fatal error: {}", reason).into());
-                }
-                Err(e) => {
-                    return Err(format!("Response error: {}", e).into());
-                }
-                _ => {}
-            }
-        }
-        
-        // Now remove the DHCP option itself
-        let remove_option_command = CommandBuilder::new()
-            .command("/ip/dhcp-server/option/remove")
-            .attribute("numbers", Some(&option_name))
-            .build();
-        
-        let mut response_rx = device.send_command(remove_option_command).await;
-        
-        while let Some(response) = response_rx.recv().await {
-            match response {
-                Ok(CommandResponse::Done(_)) => {
-                    println!("DHCP option {} removed successfully", option_name);
-                    break;
-                }
-                Ok(CommandResponse::Trap(trap)) => {
-                    // Option might not exist, which is fine
-                    println!("Note removing option: {}", trap.message);
-                    break;
-                }
-                Ok(CommandResponse::Fatal(reason)) => {
-                    return Err(format!("Fatal error removing option: {}", reason).into());
-                }
-                Err(e) => {
-                    return Err(format!("Response error: {}", e).into());
-                }
-                _ => {}
             }
         }
         
