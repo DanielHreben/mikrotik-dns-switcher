@@ -1,0 +1,37 @@
+{
+  "name": "mikrotik-dns-switcher",
+  "version": "0.0.1",
+  "main": "src/index.js",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Daniel Hreben",
+    "email": "daniel.hreben@gmail.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:DanielHreben/mikrotik-dns-switcher.git"
+  },
+  "homepage": "https://github.com/DanielHreben/mikrotik-dns-switcher/",
+  "scripts": {
+    "test": "jest --config jest.config.json",
+    "lint": "eslint . --config eslint.config.mts",
+    "start": "node src/index.ts"
+  },
+  "packageManager": "yarn@1.22.22",
+  "enginesStrict": {
+    "node": ">=v22.18.0"
+  },
+  "devDependencies": {
+    "dotenv": "^17.2.1",
+    "eslint": "^9.32.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.4",
+    "eslint-plugin-simple-import-sort": "^12.1.1",
+    "jiti": "^2.5.1",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.39.0",
+    "vitest": "^3.2.4"
+  },
+  "type": "module"
+}
