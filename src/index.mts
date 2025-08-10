@@ -6,9 +6,12 @@ import serve from 'koa-static';
 
 import { config } from './config.mts';
 import { createLogger } from './logger.mts';
-import { MikroTik } from './mikrotik.mts';
+import { MikrotikInteractorBuilder } from './mikrotik-interactor/index.mts';
+import { Service } from './service.mts';
 
 const logger = createLogger();
+const mikrotikBuilder = new MikrotikInteractorBuilder(config.mikrotik, logger);
+const model = new Service(mikrotikBuilder, config, logger);
 
 const app = new Koa({ proxy: true, proxyIpHeader: 'X-Real-IP' });
 const apiRouter = new Router().prefix('/api');
@@ -22,83 +25,45 @@ apiRouter.get('/dns', async (ctx) => {
   const ip = ctx.request.ip;
   logger.info(ip);
 
-  const lease = await MikroTik.execute(config, async (mikrotik) =>
-    mikrotik.getDHCPLeaseByIP(ip),
-  );
+  const lease = await model.getDHCPLeaseByIP(ip);
 
   logger.info({ lease });
 
   ctx.body = {
-    ip,
-    lease,
+    ok: true,
+    data: {
+      ip,
+      lease: lease
+        ? {
+            id: lease.id,
+            ip: lease.address,
+            mac: lease.macAddress,
+            comment: lease.comment,
+          }
+        : null,
+    },
   };
 });
-
-async function findOrCreateDHCPOption(mikrotik: MikroTik) {
-  const name = 'Custom DNS Server';
-  const code = '6'; // DHCP option code for DNS servers
-  const value =
-    '0x' +
-    config.app.customDns
-      .split('.')
-      .map((octet) => Number.parseInt(octet, 10).toString(16).padStart(2, '0'))
-      .join('');
-  logger.info({ name, code, value });
-  const existingOption = await mikrotik.getDHCPOptionByName(name);
-  if (existingOption) {
-    return existingOption;
-  }
-
-  return mikrotik.createDHCPOption({ name, code, value });
-}
 
 apiRouter.put('/dns', async (ctx) => {
   const ip = ctx.request.ip;
   logger.info(ip);
 
-  const updatedLease = await MikroTik.execute(config, async (mikrotik) => {
-    let lease = await mikrotik.getDHCPLeaseByIP(ip);
-    logger.info({ lease });
+  const lease = await model.createDHCPLease(ip);
 
-    if (lease?.dynamic) {
-      logger.info('Lease is dynamic, removing it');
-      await mikrotik.removeStaticDHCPLease(lease.id);
-      lease = undefined;
-    }
-
-    if (!lease) {
-      const mac = await mikrotik.findMacAddressByIP(ip);
-
-      if (!mac) {
-        throw new Error(
-          `No DHCP lease found for IP ${ip} and no ARP entry found`,
-        );
-      }
-      const option = await findOrCreateDHCPOption(mikrotik);
-      lease = await mikrotik.createStaticDHCPLease({
-        ip,
-        mac: mac.macAddress,
-        option: option.id,
-      });
-
-      logger.info('Created new static lease:', lease);
-      return lease;
-    }
-
-    if (lease.comment === config.app.comment) {
-      logger.info('Lease already static with correct comment - doing nothing');
-      return lease;
-    }
-
-    logger.info('Lease is static but comment is incorrect');
-    throw new Error('Lease is already static but comment is incorrect');
-  });
-
-  logger.info({ lease: updatedLease });
+  logger.info({ lease });
 
   ctx.body = {
-    ip,
-    lease: updatedLease,
+    ok: true,
+    data: {
+      ip,
+      lease: {
+        id: lease.id,
+        ip: lease.address,
+        mac: lease.macAddress,
+        comment: lease.comment,
+      },
+    },
   };
 });
 
@@ -106,29 +71,35 @@ apiRouter.delete('/dns', async (ctx) => {
   const ip = ctx.request.ip;
   logger.info(ip);
 
-  const result = await MikroTik.execute(config, async (mikrotik) => {
-    const lease = await mikrotik.getDHCPLeaseByIP(ip);
-    if (!lease) {
-      throw new Error(`No DHCP lease found for IP ${ip}`);
-    }
-
-    return mikrotik.removeStaticDHCPLease(lease.id);
-  });
+  const lease = await model.deleteDHCPLeaseByIP(ip);
 
   ctx.body = {
-    ip,
-    result,
+    ok: true,
+    data: {
+      ip,
+      lease: lease
+        ? {
+            id: lease.id,
+            ip: lease.address,
+            mac: lease.macAddress,
+            comment: lease.comment,
+          }
+        : null,
+    },
   };
 });
 
-// // Health check
-// app.use(async (ctx) => {
-//   ctx.body = { status: 'ok' };
-// });
-
-// Apply routes
+// API routes
 app.use(apiRouter.routes());
 app.use(apiRouter.allowedMethods());
+// Health check
+app.use(
+  new Router()
+    .get('/health', (ctx) => {
+      ctx.body = { status: 'ok' };
+    })
+    .routes(),
+);
 
 // Error handling
 app.on('error', (err) => {

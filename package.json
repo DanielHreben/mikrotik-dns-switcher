@@ -15,7 +15,10 @@
   "scripts": {
     "test": "jest --config jest.config.json",
     "lint": "tsc && eslint . --config eslint.config.mts",
-    "start": "node -r dotenv/config --watch src/index.mts | pino-pretty"
+    "start": "node -r dotenv/config --watch src/index.mts | pino-pretty",
+    "test:get": "source .env    && curl -X GET    -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty",
+    "test:put": "source .env    && curl -X PUT    -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty",
+    "test:delete": "source .env && curl -X DELETE -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty"
   },
   "packageManager": "yarn@1.22.22",
   "enginesStrict": {
