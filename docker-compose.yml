@@ -1,5 +1,6 @@
 services:
   mikrotik-dns-switcher:
+    container_name: mikrotik-dns-switcher
     build: .
     restart: unless-stopped
     env_file:
