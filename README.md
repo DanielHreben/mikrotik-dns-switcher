@@ -34,6 +34,18 @@ docker-compose up -d
 
 Open `http://localhost:3000` or `http://your-server-ip:3000`
 
+### nginx-proxy (Optional)
+
+For nginx-proxy deployments with automatic reverse proxy:
+
+```bash
+# Add VIRTUAL_HOST to your .env
+echo "VIRTUAL_HOST=dns-switcher.yourdomain.com" >> .env
+
+# Use the nginx-proxy compose file
+docker-compose -f docker-compose.nginx-proxy.yml up -d
+```
+
 ### Environment Variables
 
 Edit `.env` with your setup:
@@ -42,7 +54,7 @@ Edit `.env` with your setup:
 MIKROTIK_HOST=192.168.88.1        # Your router's IP
 MIKROTIK_USERNAME=admin           # Router username  
 MIKROTIK_PASSWORD=your-password   # Router password
-CUSTOM_DNS=192.168.1.100         # Your Pi-hole IP (or 8.8.8.8)
+CUSTOM_DNS=192.168.1.100          # Your Pi-hole IP (or 8.8.8.8)
 ```
 
 ### MikroTik Setup

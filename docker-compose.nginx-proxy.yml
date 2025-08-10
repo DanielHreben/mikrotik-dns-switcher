@@ -1,0 +1,16 @@
+services:
+  mikrotik-dns-switcher:
+    extends:
+      file: docker-compose.yml
+      service: mikrotik-dns-switcher
+    networks:
+      - nginx-proxy
+    ports: [] # Remove direct port exposure
+    expose:
+      - '3000'
+    environment:
+      VIRTUAL_HOST: ${VIRTUAL_HOST}
+
+networks:
+  nginx-proxy:
+    external: true
