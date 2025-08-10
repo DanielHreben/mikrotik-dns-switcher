@@ -5,7 +5,8 @@ import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
 export default [
-  { files: ['**/*.{ts,mts}'] },
+  { files: ['**/*.{ts,mts,js}'] },
+  { ignores: ['public/**/*', 'dist/**/*', 'node_modules/**/*'] },
   { languageOptions: { globals: { ...globals.browser, ...globals.node } } },
   pluginJs.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
