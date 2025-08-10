@@ -1,8 +1,8 @@
 import { RouterOSClient } from 'routeros-api';
 
-import type { Config } from '../config.mts';
-import type { Logger } from '../logger.mts';
-import { MikrotikInteractor } from './index.mts';
+import type { Config } from '../../config.mts';
+import type { Logger } from '../../logger.mts';
+import { MikrotikInteractor } from './interactor.mts';
 
 type MikrotikInteractorConfig = Config['mikrotik'];
 
@@ -29,7 +29,7 @@ export class MikrotikInteractorBuilder {
     try {
       return await action(interactor);
     } finally {
-      api.close();
+      await api.close();
     }
   }
 }

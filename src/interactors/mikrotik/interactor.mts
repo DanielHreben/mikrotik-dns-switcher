@@ -1,6 +1,6 @@
 import type { RosApiMenu } from 'routeros-api';
 
-import type { Logger } from '../logger.mts';
+import type { Logger } from '../../logger.mts';
 import type {
   ARPResponse,
   DHCPLeaseCreateOptions,

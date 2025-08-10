@@ -1594,6 +1594,16 @@ levn@^0.4.1:
     prelude-ls "^1.2.1"
     type-check "~0.4.0"
 
+livr-extra-rules@^1.4.0:
+  version "1.4.0"
+  resolved "https://packages.atlassian.com/api/npm/npm-remote/livr-extra-rules/-/livr-extra-rules-1.4.0.tgz#221f1953580dc1b56088635f03b99268d1c2bf3d"
+  integrity sha512-WB/TyC/FDVrPeIZl22eLXdsH4OMt1oOVd6aIsAtrMsOGbDKgalFMcKDbprxwimhj6k2Lt4SrRnyxEM2tKsquJw==
+
+livr@^2.8.1:
+  version "2.8.1"
+  resolved "https://packages.atlassian.com/api/npm/npm-remote/livr/-/livr-2.8.1.tgz#4ef9d48562999e32e607a29482a3b1bfd2ac723a"
+  integrity sha512-t/ealoDw7e6Y4HwZpGQdTWYpNNJ/jc+2SPGYgW1u9pnPnaK+sj15jqbnOb9yzHdvZE/oCnoj2EfyuDkCeq86ig==
+
 locate-path@^6.0.0:
   version "6.0.0"
   resolved "https://packages.atlassian.com/api/npm/npm-remote/locate-path/-/locate-path-6.0.0.tgz#55321eb309febbc59c4801d931a72452a681d286"

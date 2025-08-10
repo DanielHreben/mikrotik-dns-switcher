@@ -48,6 +48,8 @@
     "koa": "3",
     "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",
+    "livr": "^2.8.1",
+    "livr-extra-rules": "^1.4.0",
     "pino": "^9.8.0",
     "routeros-api": "^1.0.1",
     "zod": "^4.0.16"

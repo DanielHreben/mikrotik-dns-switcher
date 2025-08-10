@@ -1,8 +1,4 @@
-import { config as dotenvConfig } from 'dotenv';
 import { z } from 'zod';
-
-// Load environment variables
-dotenvConfig();
 
 const configSchema = z.object({
   mikrotik: z.object({
