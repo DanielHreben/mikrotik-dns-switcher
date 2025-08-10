@@ -1,5 +1,6 @@
 import type { MikrotikInteractor } from '../../interactors/mikrotik/interactor.mts';
 import type { DNSSwitcherDependencies } from './types.mts';
+import { CLIENT_STATUS } from './util.ts';
 
 // DHCP utility function for creating DNS service
 
@@ -86,12 +87,7 @@ export const setupDHCPLeaseWithCustomDNSForClient = {
 
       return {
         ip,
-        lease: {
-          id: updatedLease.id,
-          ip: updatedLease.address,
-          mac: updatedLease.macAddress,
-          comment: updatedLease.comment,
-        },
+        status: CLIENT_STATUS.CUSTOM,
       };
     },
 };

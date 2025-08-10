@@ -1,4 +1,5 @@
 import type { DNSSwitcherDependencies } from './types.mts';
+import { getClientStatus } from './util.ts';
 
 export const checkIfClientHasCustomDHCPLease = {
   execute:
@@ -16,14 +17,7 @@ export const checkIfClientHasCustomDHCPLease = {
 
       return {
         ip,
-        lease: lease
-          ? {
-              id: lease.id,
-              ip: lease.address,
-              mac: lease.macAddress,
-              comment: lease.comment,
-            }
-          : null,
+        status: getClientStatus(lease, deps.config.app.comment),
       };
     },
 };

@@ -1,7 +1,7 @@
 {
   "name": "mikrotik-dns-switcher",
   "version": "0.0.1",
-  "main": "src/index.mts",
+  "main": "src/app.mts",
   "license": "Apache-2.0",
   "author": {
     "name": "Daniel Hreben",
@@ -13,9 +13,9 @@
   },
   "homepage": "https://github.com/DanielHreben/mikrotik-dns-switcher/",
   "scripts": {
-    "test": "jest --config jest.config.json",
+    "test": "vitest",
     "lint": "tsc && eslint . --config eslint.config.mts",
-    "start": "node -r dotenv/config --watch src/index.mts | pino-pretty",
+    "start": "node -r dotenv/config --watch src/app.mts | pino-pretty",
     "test:get": "source .env    && curl -X GET    -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty",
     "test:put": "source .env    && curl -X PUT    -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty",
     "test:delete": "source .env && curl -X DELETE -H \"X-Real-IP: $TEST_CLIENT_IP\" http://localhost:${PORT}/api/dns | npx pino-pretty"
@@ -48,8 +48,6 @@
     "koa": "3",
     "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",
-    "livr": "^2.8.1",
-    "livr-extra-rules": "^1.4.0",
     "pino": "^9.8.0",
     "routeros-api": "^1.0.1",
     "zod": "^4.0.16"

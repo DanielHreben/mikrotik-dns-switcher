@@ -1,4 +1,5 @@
 import type { DNSSwitcherDependencies } from './types.mts';
+import { CLIENT_STATUS } from './util.ts';
 
 export const removeCustomDHCPLeaseForClient = {
   execute:
@@ -8,7 +9,7 @@ export const removeCustomDHCPLeaseForClient = {
 
       logger.info({ ip }, 'Deleting DNS lease for IP');
 
-      const result = await mikrotikBuilder.execute(async (mikrotik) => {
+      await mikrotikBuilder.execute(async (mikrotik) => {
         const lease = await mikrotik.getDHCPLeaseByIP(ip);
 
         if (!lease) {
@@ -16,19 +17,24 @@ export const removeCustomDHCPLeaseForClient = {
           return undefined;
         }
 
-        return await mikrotik.removeDHCPLease(lease.id);
+        if (lease.comment !== deps.config.app.comment) {
+          logger.info(
+            { ip },
+            'Lease does not have the expected comment, skipping deletion',
+          );
+
+          throw new Error(
+            'Lease does not have the expected comment, skipping deletion',
+          );
+        }
+
+        await mikrotik.removeDHCPLease(lease.id);
+        return undefined;
       });
 
       return {
         ip,
-        lease: result
-          ? {
-              id: result.id,
-              ip: result.address,
-              mac: result.macAddress,
-              comment: result.comment,
-            }
-          : null,
+        status: CLIENT_STATUS.DEFAULT,
       };
     },
 };
