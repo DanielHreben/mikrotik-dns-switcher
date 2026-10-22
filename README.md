@@ -55,16 +55,36 @@ MIKROTIK_HOST=192.168.88.1        # Your router's IP
 MIKROTIK_USERNAME=admin           # Router username  
 MIKROTIK_PASSWORD=your-password   # Router password
 CUSTOM_DNS=192.168.1.100          # Your Pi-hole IP (or 8.8.8.8)
+
+# Production (behind a reverse proxy):
+TRUSTED_PROXY=172.19.0.100        # Trust X-Real-IP only from this proxy
+ALLOWED_RANGE=192.168.88.20-192.168.88.99   # Only manage these addresses (the DHCP pool)
+MIKROTIK_TLS_CA=/path/router-ca.crt         # Router CA: use API-SSL (8729), verify the router
+
+# Local development only:
+ALLOW_TARGET_IP=true              # Trust X-Real-IP from anyone (?ip= in the page)
 ```
+
+Which device a request acts for: the `X-Real-IP` header when the request comes
+from `TRUSTED_PROXY` (or `ALLOW_TARGET_IP=true`), otherwise the connection's own
+address. Without `ALLOWED_RANGE` every address is allowed; with it, requests for
+other addresses get `403 ADDRESS_NOT_ALLOWED` before the router is contacted.
 
 ### MikroTik Setup
 
-Enable API on your router:
+Production: API-SSL with the router's own certificate, reachable only from the
+switcher's host, and the plain API off:
 
 ```
-/ip service enable api
-/ip service set api port=8728
+/ip service set api-ssl disabled=no certificate=<your api-ssl certificate> available-from=<switcher host>/32
+/ip service disable api
 ```
+
+The router user needs `read,write,api`. RouterOS can't limit that to DHCP, so
+keep the account's `address` restricted to the switcher's host.
+
+Local development can use the plain API (`/ip service enable api`, port 8728)
+by leaving `MIKROTIK_TLS_CA` unset.
 
 ## Development
 
@@ -82,7 +102,8 @@ yarn start
 
 ### API Testing
 
-You can manage specific devices by adding the `X-Real-IP` header:
+With `ALLOW_TARGET_IP=true` (local development only) you can manage specific
+devices by adding the `X-Real-IP` header, or `?ip=` in the page:
 
 ```bash
 curl -H "X-Real-IP: 192.168.1.100" http://localhost:3000/api/dns

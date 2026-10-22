@@ -26,9 +26,7 @@
   },
   "devDependencies": {
     "@types/koa": "^3.0.0",
-    "@types/koa-bodyparser": "^4.3.12",
     "@types/koa-static": "^4.0.4",
-    "@types/koa__router": "^12.0.4",
     "@types/node": "^24.2.1",
     "dotenv": "^17.2.1",
     "eslint": "^9.32.0",
@@ -44,9 +42,8 @@
   },
   "type": "module",
   "dependencies": {
-    "@koa/router": "^14.0.0",
+    "@koa/router": "^15",
     "koa": "3",
-    "koa-bodyparser": "^4.4.1",
     "koa-static": "^5.0.0",
     "pino": "^9.8.0",
     "routeros-api": "^1.0.1",

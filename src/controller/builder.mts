@@ -53,7 +53,6 @@ const defaults: ControllerDefaults = {
   extractParams: (ctx): Record<string, unknown> => ({
     ...(ctx.params as Record<string, unknown>),
     ...(ctx.query as Record<string, unknown>),
-    ...(ctx.request.body as Record<string, unknown>),
   }),
 
   extractContext: (ctx) => ctx.state,

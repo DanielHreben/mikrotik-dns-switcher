@@ -2,7 +2,6 @@ import Router from '@koa/router';
 import http from 'http';
 import type { Context } from 'koa';
 import Koa from 'koa';
-import bodyParser from 'koa-bodyparser';
 import serve from 'koa-static';
 
 import { config } from './config.mts';
@@ -10,6 +9,10 @@ import { createController } from './controller/builder.mts';
 import { extractClientIP } from './controller/util.ts';
 import { MikrotikInteractorBuilder } from './interactors/mikrotik/builder.mts';
 import { createLogger } from './logger.mts';
+import {
+  AddressNotAllowedError,
+  isAllowedAddress,
+} from './services/dns-switcher/allowed-range.ts';
 import { checkIfClientHasCustomDHCPLease } from './services/dns-switcher/check-for-client.mts';
 import { removeCustomDHCPLeaseForClient } from './services/dns-switcher/reset-for-client.mts';
 import { setupDHCPLeaseWithCustomDNSForClient } from './services/dns-switcher/setup-for-client.mts';
@@ -30,32 +33,61 @@ const serviceHealthController = createController({
   logger,
 } satisfies ServiceHealthDependencies);
 
-const app = new Koa({ proxy: true, proxyIpHeader: 'X-Real-IP' });
+// Not Koa's own proxy handling: which device a request acts for is decided by
+// extractClientIP (X-Real-IP only from the trusted proxy), then limited to the
+// allowed range.
+const app = new Koa();
 const apiRouter = new Router().prefix('/api');
 
+function dnsParams(ctx: Context) {
+  const ip = extractClientIP(ctx, config.app);
+  if (!isAllowedAddress(ip, config.app.allowedRange)) {
+    throw new AddressNotAllowedError(ip);
+  }
+  return { ip };
+}
+
+function renderDnsError(error: Error, ctx: Context) {
+  // eslint-disable-next-line no-console
+  console.error(error);
+  const refused = error instanceof AddressNotAllowedError;
+  ctx.status = refused ? 403 : 500;
+  ctx.body = {
+    ok: false,
+    error: refused
+      ? {
+          code: 'ADDRESS_NOT_ALLOWED',
+          message: 'This address is not managed by the DNS switcher',
+        }
+      : { code: 'UNEXPECTED_ERROR', message: 'Something went wrong' },
+  };
+}
+
 // Middleware
-app.use(bodyParser());
 app.use(serve('public'));
 
 // DNS Routes
 apiRouter.get(
   '/dns',
   dnsSwitcherController(checkIfClientHasCustomDHCPLease)
-    .extractParams((ctx: Context) => ({ ip: extractClientIP(ctx) }))
+    .extractParams(dnsParams)
+    .renderError(renderDnsError)
     .buildHandler(),
 );
 
 apiRouter.put(
   '/dns',
   dnsSwitcherController(setupDHCPLeaseWithCustomDNSForClient)
-    .extractParams((ctx: Context) => ({ ip: extractClientIP(ctx) }))
+    .extractParams(dnsParams)
+    .renderError(renderDnsError)
     .buildHandler(),
 );
 
 apiRouter.delete(
   '/dns',
   dnsSwitcherController(removeCustomDHCPLeaseForClient)
-    .extractParams((ctx: Context) => ({ ip: extractClientIP(ctx) }))
+    .extractParams(dnsParams)
+    .renderError(renderDnsError)
     .buildHandler(),
 );
 

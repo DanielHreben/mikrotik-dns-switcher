@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import type { TlsOptions } from 'node:tls';
+
 import { RouterOSClient } from 'routeros-api';
 
 import type { Config } from '../../config.mts';
@@ -9,10 +12,13 @@ type MikrotikInteractorConfig = Config['mikrotik'];
 export class MikrotikInteractorBuilder {
   private config: MikrotikInteractorConfig;
   private logger: Logger;
+  // API-SSL (8729) with the router's certificate checked against its CA.
+  private tls: TlsOptions | undefined;
 
   public constructor(config: MikrotikInteractorConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
+    this.tls = config.tlsCa ? { ca: readFileSync(config.tlsCa) } : undefined;
   }
 
   public async execute<T>(
@@ -22,6 +28,7 @@ export class MikrotikInteractorBuilder {
       host: this.config.host,
       user: this.config.username,
       password: this.config.password,
+      ...(this.tls && { tls: this.tls }),
     });
 
     const client = await api.connect();
