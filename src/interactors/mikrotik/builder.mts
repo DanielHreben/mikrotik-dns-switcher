@@ -6,6 +6,7 @@ import { RouterOSClient } from 'routeros-api';
 import type { Config } from '../../config.mts';
 import type { Logger } from '../../logger.mts';
 import { MikrotikInteractor } from './interactor.mts';
+import { routerOSOptions } from './options.ts';
 
 type MikrotikInteractorConfig = Config['mikrotik'];
 
@@ -24,12 +25,7 @@ export class MikrotikInteractorBuilder {
   public async execute<T>(
     action: (client: MikrotikInteractor) => Promise<T>,
   ): Promise<T> {
-    const api = new RouterOSClient({
-      host: this.config.host,
-      user: this.config.username,
-      password: this.config.password,
-      ...(this.tls && { tls: this.tls }),
-    });
+    const api = new RouterOSClient(routerOSOptions(this.config, this.tls));
 
     const client = await api.connect();
     const interactor = new MikrotikInteractor(client, this.logger);
