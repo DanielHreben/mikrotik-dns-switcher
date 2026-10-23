@@ -136,6 +136,36 @@ function hideError() {
 }
 
 /**
+ * Read an API response, translating known errors into user-friendly messages.
+ * @param {Response} response - The fetch response
+ * @param {string} fallbackMessage - Message to use when the API returns no error detail
+ * @returns {Promise<DNSStatusData>} The response data
+ * @throws {Error} When the API request fails or returns an error
+ */
+async function readAPIResponse(response, fallbackMessage) {
+  /** @type {APIResponse|undefined} */
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    // Some network and proxy errors do not return a JSON response.
+  }
+
+  if (data?.error?.code === 'ADDRESS_NOT_ALLOWED') {
+    throw new Error(
+      'This device can’t be managed from its current connection. If you’re on your home network, it may be using a fixed network address; ask whoever manages the network to check whether it can be added to DNS Switcher.'
+    );
+  }
+  if (!response.ok) {
+    throw new Error(data?.error?.message || `HTTP ${response.status}: ${response.statusText}`);
+  }
+  if (!data?.ok) {
+    throw new Error(data?.error?.message || fallbackMessage);
+  }
+  return data.data;
+}
+
+/**
  * Fetch the current DNS status from the API
  * @returns {Promise<DNSStatusData>} The DNS status data
  * @throws {Error} When the API request fails or returns an error
@@ -149,15 +179,7 @@ async function fetchStatus() {
   }
 
   const response = await fetch('/api/dns', requestOptions);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-  /** @type {APIResponse} */
-  const data = await response.json();
-  if (!data.ok) {
-    throw new Error(data.error?.message || 'Failed to check DNS status');
-  }
-  return data.data;
+  return readAPIResponse(response, 'Failed to check DNS status');
 }
 
 /**
@@ -183,15 +205,7 @@ async function switchToCustomDNS() {
   }
 
   const response = await fetch('/api/dns', requestOptions);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-  /** @type {APIResponse} */
-  const data = await response.json();
-  if (!data.ok) {
-    throw new Error(data.error?.message || 'Failed to switch to custom DNS');
-  }
-  return data.data;
+  return readAPIResponse(response, 'Failed to switch to custom DNS');
 }
 
 /**
@@ -217,15 +231,7 @@ async function resetToDefaultDNS() {
   }
 
   const response = await fetch('/api/dns', requestOptions);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-  }
-  /** @type {APIResponse} */
-  const data = await response.json();
-  if (!data.ok) {
-    throw new Error(data.error?.message || 'Failed to reset to default DNS');
-  }
-  return data.data;
+  return readAPIResponse(response, 'Failed to reset to default DNS');
 }
 
 /**
