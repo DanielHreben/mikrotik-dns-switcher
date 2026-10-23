@@ -106,3 +106,10 @@ dist
 .idea/
 
 .DS_Store
+# Git worktrees
+.worktrees/
+
+
+# Added by cargo
+
+/target
