@@ -46,6 +46,9 @@ echo "VIRTUAL_HOST=dns-switcher.yourdomain.com" >> .env
 docker-compose -f docker-compose.nginx-proxy.yml up -d
 ```
 
+The image is a single static binary (about 2 MB; roughly 2 MB of RAM idle) with the
+front end embedded. It runs as a non-root user and needs no other files.
+
 ### Environment Variables
 
 Edit `.env` with your setup:
@@ -89,16 +92,22 @@ by leaving `MIKROTIK_TLS_CA` unset.
 ## Development
 
 ```bash
-# Clone and install
 git clone https://github.com/DanielHreben/mikrotik-dns-switcher.git
 cd mikrotik-dns-switcher
-yarn install
 
-# Configure and run
+# Configure and run (the service reads its settings from the environment)
 cp .env.example .env
 nano .env
-yarn start
+set -a; . ./.env; set +a
+cargo run
+
+# Tests, lints
+cargo test
+cargo clippy --all-targets
 ```
+
+The front end is in `public/` and is compiled into the binary, so changes there
+need a rebuild.
 
 ### API Testing
 
@@ -116,6 +125,7 @@ curl -H "X-Real-IP: 192.168.1.100" http://localhost:3000/api/dns
 | `GET` | `/api/dns` | Check DNS status |
 | `PUT` | `/api/dns` | Switch to custom DNS |
 | `DELETE` | `/api/dns` | Reset to default DNS |
+| `GET` | `/health` | Liveness (does not contact the router) |
 
 ## Troubleshooting
 
