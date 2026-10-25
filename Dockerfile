@@ -1,20 +1,21 @@
-FROM rust:1-alpine AS build
-RUN apk add --no-cache build-base
-WORKDIR /src
+# Cross-compiled on the build machine's own architecture for each target, so a
+# multi-arch image needs no emulation.
+ARG TARGETARCH
+FROM --platform=$BUILDPLATFORM ghcr.io/rust-cross/rust-musl-cross:x86_64-musl AS build-amd64
+FROM --platform=$BUILDPLATFORM ghcr.io/rust-cross/rust-musl-cross:aarch64-musl AS build-arm64
 
-# Build the dependencies first so source changes don't redo them.
+FROM build-${TARGETARCH} AS build
+WORKDIR /home/rust/src
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir src && echo 'fn main() {}' > src/main.rs && touch src/lib.rs \
-  && cargo build --release \
-  && rm -rf src target/release/deps/mikrotik_dns_switcher* target/release/.fingerprint/mikrotik-dns-switcher*
-
 COPY src ./src
 COPY public ./public
-RUN cargo build --release
+RUN cargo build --release \
+  && mkdir /home/rust/out \
+  && cp target/*-unknown-linux-musl/release/mikrotik-dns-switcher /home/rust/out/
 
 # A static binary with the front end embedded: nothing else to ship.
 FROM scratch
-COPY --from=build /src/target/release/mikrotik-dns-switcher /mikrotik-dns-switcher
+COPY --from=build /home/rust/out/mikrotik-dns-switcher /mikrotik-dns-switcher
 USER 10001:10001
 ENV PORT=3000
 EXPOSE 3000
