@@ -83,6 +83,11 @@ switcher's host, and the plain API off:
 /ip service disable api
 ```
 
+The API-SSL certificate must be an ordinary server certificate, not a CA: create it with
+`key-usage=digital-signature,key-encipherment,tls-server` and sign it with your own CA.
+Its subject-alt-name must match `MIKROTIK_HOST` (an `IP:` entry when that is an address),
+and `MIKROTIK_TLS_CA` is the CA's PEM file.
+
 The router user needs `read,write,api`. RouterOS can't limit that to DHCP, so
 keep the account's `address` restricted to the switcher's host.
 
@@ -104,6 +109,9 @@ cargo run
 # Tests, lints
 cargo test
 cargo clippy --all-targets
+
+# End to end against a real RouterOS (a MikroTik CHR in QEMU; minutes without KVM)
+e2e/run-chr.sh
 ```
 
 The front end is in `public/` and is compiled into the binary, so changes there

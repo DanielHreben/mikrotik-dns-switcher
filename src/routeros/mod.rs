@@ -62,6 +62,7 @@ pub struct Reply {
 
 pub struct Session<S> {
     stream: BufStream<S>,
+    timeout: Duration,
 }
 
 pub type Connection = Session<Box<dyn Stream>>;
@@ -128,7 +129,13 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Session<S> {
     pub fn new(stream: S) -> Self {
         Session {
             stream: BufStream::new(stream),
+            timeout: TIMEOUT,
         }
+    }
+
+    /// Per-command timeout, for the rare slow command (signing a certificate).
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
     }
 
     pub async fn login(&mut self, user: &str, password: &str) -> Result<(), Error> {
@@ -146,7 +153,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Session<S> {
     /// Sends one command and reads until its `!done`. A `!trap` is the router
     /// refusing the command; `!fatal` ends the session.
     pub async fn run(&mut self, words: &[&str]) -> Result<Reply, Error> {
-        timeout(TIMEOUT, self.run_inner(words))
+        timeout(self.timeout, self.run_inner(words))
             .await
             .map_err(|_| Error::Timeout)?
     }
@@ -165,6 +172,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> Session<S> {
             let attrs = parse_attrs(attrs);
             match kind.as_slice() {
                 b"!re" => reply.rows.push(attrs),
+                // RouterOS 7 says so when a query matched nothing; `!done` follows.
+                b"!empty" => {}
                 b"!done" => {
                     reply.ret = attrs.get("ret").cloned();
                     return match trap {
@@ -253,6 +262,13 @@ mod tests {
         assert_eq!(reply.rows.len(), 2);
         assert_eq!(reply.rows[0]["address"], "10.0.0.5");
         assert_eq!(reply.ret.as_deref(), Some("*9"));
+    }
+
+    #[tokio::test]
+    async fn an_empty_result_is_not_an_error() {
+        let mut s = serve(vec![vec![b"!empty"], vec![b"!done"]]).await;
+        let reply = s.run(&["/ip/arp/print"]).await.unwrap();
+        assert!(reply.rows.is_empty());
     }
 
     #[tokio::test]

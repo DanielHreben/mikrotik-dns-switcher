@@ -98,6 +98,10 @@ async fn handle(mut stream: TcpStream, state: Arc<Mutex<RouterState>>) {
         let outcome = run(&state, &command, &words);
         match outcome {
             Ok((rows, ret)) => {
+                if rows.is_empty() && command.ends_with("/print") {
+                    // RouterOS 7 marks a query with no matches.
+                    write_sentence(&mut stream, &[w("!empty")]).await.unwrap();
+                }
                 for r in &rows {
                     reply(&mut stream, "!re", r).await;
                 }
