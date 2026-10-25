@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use crate::client_ip::Trust;
 use crate::range::AddressRange;
 
-#[derive(Debug)]
 pub struct Config {
     pub mikrotik_host: String,
     pub mikrotik_username: String,
@@ -22,6 +21,31 @@ pub struct Config {
     pub trust: Trust,
     /// The addresses the switcher may manage, e.g. "192.168.88.20-192.168.88.99".
     pub allowed_range: Option<AddressRange>,
+    /// Host names the service answers to (lower case, no port). Empty: any. Set it
+    /// to the name people type, so a page cannot reach the service under another
+    /// name (DNS rebinding).
+    pub allowed_hosts: Vec<String>,
+    /// How many leases the switcher may own at once.
+    pub max_managed_leases: usize,
+}
+
+// The password stays out of any debug output.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("mikrotik_host", &self.mikrotik_host)
+            .field("mikrotik_username", &self.mikrotik_username)
+            .field("mikrotik_password", &"<redacted>")
+            .field("mikrotik_tls_ca", &self.mikrotik_tls_ca)
+            .field("port", &self.port)
+            .field("custom_dns", &self.custom_dns)
+            .field("comment", &self.comment)
+            .field("trust", &self.trust)
+            .field("allowed_range", &self.allowed_range)
+            .field("allowed_hosts", &self.allowed_hosts)
+            .field("max_managed_leases", &self.max_managed_leases)
+            .finish()
+    }
 }
 
 fn required(get: &impl Fn(&str) -> Option<String>, key: &str) -> Result<String, String> {
@@ -54,6 +78,24 @@ fn boolean(get: &impl Fn(&str) -> Option<String>, key: &str) -> Result<bool, Str
     }
 }
 
+fn hosts(get: &impl Fn(&str) -> Option<String>) -> Result<Vec<String>, String> {
+    let Some(list) = get("ALLOWED_HOSTS") else {
+        return Ok(Vec::new());
+    };
+    list.split(',')
+        .map(|h| {
+            let h = h.trim().to_ascii_lowercase();
+            if h.is_empty() || h.contains(['/', ':', ' ']) {
+                Err(format!(
+                    "ALLOWED_HOSTS: invalid host name {h:?} (names only, no port)"
+                ))
+            } else {
+                Ok(h)
+            }
+        })
+        .collect()
+}
+
 impl Config {
     pub fn from_env() -> Result<Self, String> {
         Self::from_lookup(|k| std::env::var(k).ok())
@@ -80,6 +122,12 @@ impl Config {
             allowed_range: get("ALLOWED_RANGE")
                 .map(|v| AddressRange::parse(&v).map_err(|e| format!("ALLOWED_RANGE: {e}")))
                 .transpose()?,
+            allowed_hosts: hosts(&get)?,
+            max_managed_leases: match parsed(&get, "MAX_MANAGED_LEASES", "number")? {
+                Some(0) => return Err("MAX_MANAGED_LEASES must be at least 1".into()),
+                Some(n) => n,
+                None => 32,
+            },
         })
     }
 }
@@ -110,6 +158,28 @@ mod tests {
         assert_eq!(c.comment, "DNS-Switcher-Managed");
         assert!(c.allowed_range.is_none() && c.trust.proxy.is_none() && !c.trust.allow_target_ip);
         assert!(c.mikrotik_tls_ca.is_none());
+        assert!(c.allowed_hosts.is_empty());
+        assert_eq!(c.max_managed_leases, 32);
+    }
+
+    #[test]
+    fn reads_hosts_and_the_lease_limit() {
+        let c = load(&[
+            ("ALLOWED_HOSTS", "Mikrotik-DNS-Switcher.home, switcher.lan"),
+            ("MAX_MANAGED_LEASES", "5"),
+        ])
+        .unwrap();
+        assert_eq!(
+            c.allowed_hosts,
+            ["mikrotik-dns-switcher.home", "switcher.lan"]
+        );
+        assert_eq!(c.max_managed_leases, 5);
+    }
+
+    #[test]
+    fn debug_output_never_contains_the_password() {
+        let c = load(&[("MIKROTIK_PASSWORD", "hunter2-secret")]).unwrap();
+        assert!(!format!("{c:?}").contains("hunter2-secret"));
     }
 
     #[test]
@@ -154,6 +224,10 @@ mod tests {
             ("ALLOW_TARGET_IP", "maybe"),
             ("PORT", "http"),
             ("CUSTOM_DNS", "::1"),
+            ("ALLOWED_HOSTS", ""),
+            ("ALLOWED_HOSTS", "switcher.home:3000"),
+            ("MAX_MANAGED_LEASES", "0"),
+            ("MAX_MANAGED_LEASES", "many"),
         ] {
             assert!(load(&[(key, bad)]).is_err(), "{key}={bad:?} should fail");
         }

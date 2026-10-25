@@ -9,7 +9,7 @@ WORKDIR /home/rust/src
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY public ./public
-RUN cargo build --release \
+RUN cargo build --release --locked \
   && mkdir /home/rust/out \
   && cp target/*-unknown-linux-musl/release/mikrotik-dns-switcher /home/rust/out/
 

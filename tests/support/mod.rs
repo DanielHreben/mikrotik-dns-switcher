@@ -146,6 +146,17 @@ fn run(
             ret.insert("ret".into(), id);
             vec![]
         }
+        "/ip/dhcp-server/option/set" => {
+            let a = attrs(words);
+            let id = a.get(".id").cloned().unwrap_or_default();
+            let Some(option) = st.options.iter_mut().find(|o| o.get(".id") == Some(&id)) else {
+                return Err("no such item (4)".into());
+            };
+            if let Some(value) = a.get("value") {
+                option.insert("value".into(), value.clone());
+            }
+            vec![]
+        }
         "/ip/dhcp-server/lease/remove" => {
             let id = attrs(words).get(".id").cloned().unwrap_or_default();
             let before = st.leases.len();

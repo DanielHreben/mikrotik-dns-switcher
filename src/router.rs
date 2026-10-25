@@ -12,7 +12,7 @@ pub struct Router<'a, S> {
 
 pub const OPTION_NAME: &str = "Custom DNS Server";
 /// DHCP option code for DNS servers.
-const DNS_OPTION_CODE: u8 = 6;
+pub const DNS_OPTION_CODE: u8 = 6;
 
 /// `192.168.88.113` as RouterOS writes a raw option value: `0xc0a85871`.
 pub fn dns_option_value(dns: Ipv4Addr) -> String {
@@ -61,6 +61,30 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Router<'a, S> {
         reply
             .ret
             .ok_or_else(|| Error::Protocol("option/add returned no id".into()))
+    }
+
+    /// How many leases carry the app's comment.
+    pub async fn managed_lease_count(&mut self, comment: &str) -> Result<usize, Error> {
+        let reply = self
+            .session
+            .run(&[
+                "/ip/dhcp-server/lease/print",
+                &format!("?comment={comment}"),
+                "=.proplist=.id",
+            ])
+            .await?;
+        Ok(reply.rows.len())
+    }
+
+    pub async fn set_option_value(&mut self, id: &str, value: &str) -> Result<(), Error> {
+        self.session
+            .run(&[
+                "/ip/dhcp-server/option/set",
+                &format!("=.id={id}"),
+                &format!("=value={value}"),
+            ])
+            .await
+            .map(drop)
     }
 
     pub async fn create_lease(

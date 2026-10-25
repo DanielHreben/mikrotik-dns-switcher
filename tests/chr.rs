@@ -25,6 +25,8 @@ use tower::ServiceExt;
 
 const CLIENT: &str = "192.168.88.42";
 const MAC: &str = "AA:BB:CC:DD:EE:42";
+const CLIENT2: &str = "192.168.88.43";
+const MAC2: &str = "AA:BB:CC:DD:EE:43";
 const COMMENT: &str = "DNS-Switcher-Managed";
 const PASSWORD: &str = "e2e-pass-word";
 // The group exactly as the production router defines it.
@@ -151,6 +153,16 @@ async fn provision(s: &mut Connection) -> Vec<u8> {
         ],
     )
     .await;
+    run(
+        s,
+        &[
+            "/ip/arp/add",
+            &format!("=address={CLIENT2}"),
+            &format!("=mac-address={MAC2}"),
+            "=interface=ether1",
+        ],
+    )
+    .await;
     export_ca(s).await
 }
 
@@ -175,10 +187,14 @@ async fn export_ca(s: &mut Connection) -> Vec<u8> {
 }
 
 async fn call(app: &axum::Router, method: &str) -> (StatusCode, Value) {
+    call_for(app, method, CLIENT).await
+}
+
+async fn call_for(app: &axum::Router, method: &str, ip: &str) -> (StatusCode, Value) {
     let mut req = Request::builder()
         .method(method)
         .uri("/api/dns")
-        .header("x-real-ip", CLIENT)
+        .header("x-real-ip", ip)
         .body(Body::empty())
         .unwrap();
     req.extensions_mut().insert(ConnectInfo(
@@ -216,19 +232,30 @@ async fn switches_dns_on_a_real_routeros() {
         panic!("dns-switcher cannot log in over API-SSL: {e}");
     }
 
-    let app = router(Arc::new(AppState {
-        endpoint: endpoint("dns-switcher", PASSWORD, port("CHR_TLS_PORT"), Some(ca)),
-        settings: Settings {
-            comment: COMMENT.into(),
-            custom_dns: Ipv4Addr::new(192, 168, 88, 113),
-        },
-        trust: Trust {
-            proxy: Some(Ipv4Addr::new(172, 19, 0, 100)),
-            allow_target_ip: false,
-        },
-        allowed_range: Some(AddressRange::parse("192.168.88.20-192.168.88.99").unwrap()),
-        router_lock: Mutex::new(()),
-    }));
+    let make_app = |custom_dns: Ipv4Addr, max_managed_leases: usize| {
+        router(Arc::new(AppState {
+            endpoint: endpoint(
+                "dns-switcher",
+                PASSWORD,
+                port("CHR_TLS_PORT"),
+                Some(ca.clone()),
+            ),
+            settings: Settings {
+                comment: COMMENT.into(),
+                custom_dns,
+                max_managed_leases,
+            },
+            trust: Trust {
+                proxy: Some(Ipv4Addr::new(172, 19, 0, 100)),
+                allow_target_ip: false,
+            },
+            allowed_range: Some(AddressRange::parse("192.168.88.20-192.168.88.99").unwrap()),
+            allowed_hosts: Vec::new(),
+            lock_wait: Duration::from_secs(60),
+            router_lock: Mutex::new(()),
+        }))
+    };
+    let app = make_app(Ipv4Addr::new(192, 168, 88, 113), 32);
 
     let (code, body) = call(&app, "GET").await;
     assert_eq!((code, status(&body)), (StatusCode::OK, "DEFAULT"), "{body}");
@@ -279,6 +306,41 @@ async fn switches_dns_on_a_real_routeros() {
         .await
         .is_empty()
     );
+
+    // CUSTOM_DNS changed: the app's own option is corrected on the router.
+    let moved = make_app(Ipv4Addr::new(192, 168, 88, 114), 32);
+    let (code, body) = call(&moved, "PUT").await;
+    assert_eq!((code, status(&body)), (StatusCode::OK, "CUSTOM"), "{body}");
+    let options = run(
+        &mut admin,
+        &["/ip/dhcp-server/option/print", "?name=Custom DNS Server"],
+    )
+    .await;
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0]["value"], "0xc0a85872", "{options:?}");
+
+    // The limit counts leases carrying the app's comment, as the router reports them.
+    let limited = make_app(Ipv4Addr::new(192, 168, 88, 114), 1);
+    let (code, body) = call_for(&limited, "PUT", CLIENT2).await;
+    assert_eq!(code, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"]["code"], "LIMIT_REACHED");
+    assert!(
+        run(
+            &mut admin,
+            &[
+                "/ip/dhcp-server/lease/print",
+                &format!("?address={CLIENT2}")
+            ]
+        )
+        .await
+        .is_empty()
+    );
+    let (code, body) = call(&app, "DELETE").await;
+    assert_eq!((code, status(&body)), (StatusCode::OK, "DEFAULT"), "{body}");
+    let (code, body) = call_for(&limited, "PUT", CLIENT2).await;
+    assert_eq!((code, status(&body)), (StatusCode::OK, "CUSTOM"), "{body}");
+    let (code, body) = call_for(&app, "DELETE", CLIENT2).await;
+    assert_eq!((code, status(&body)), (StatusCode::OK, "DEFAULT"), "{body}");
 
     // Someone else's static lease is left alone.
     run(

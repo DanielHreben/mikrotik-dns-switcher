@@ -63,10 +63,21 @@ CUSTOM_DNS=192.168.1.100          # Your Pi-hole IP (or 8.8.8.8)
 TRUSTED_PROXY=172.19.0.100        # Trust X-Real-IP only from this proxy
 ALLOWED_RANGE=192.168.88.20-192.168.88.99   # Only manage these addresses (the DHCP pool)
 MIKROTIK_TLS_CA=/path/router-ca.crt         # Router CA: use API-SSL (8729), verify the router
+ALLOWED_HOSTS=dns-switcher.home             # Answer only to this name (comma-separated, no port)
+MAX_MANAGED_LEASES=32                       # Most leases the switcher may own at once (default 32)
 
 # Local development only:
 ALLOW_TARGET_IP=true              # Trust X-Real-IP from anyone (?ip= in the page)
 ```
+
+Every enabled device holds a permanent static lease, so the switcher refuses new ones
+(`429 LIMIT_REACHED`) once `MAX_MANAGED_LEASES` carry its comment. Without
+`ALLOWED_HOSTS` any `Host` header is served; set it so that a web page cannot reach the
+service under a name it controls (DNS rebinding). The health check is exempt. Responses
+carry `X-Frame-Options: DENY` and a restrictive `Content-Security-Policy`.
+
+`TRUSTED_PROXY` is an address: if it is a Docker address, pin the proxy's IP in its
+compose file so no other container can take it.
 
 Which device a request acts for: the `X-Real-IP` header when the request comes
 from `TRUSTED_PROXY` (or `ALLOW_TARGET_IP=true`), otherwise the connection's own

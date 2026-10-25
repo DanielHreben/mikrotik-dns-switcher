@@ -38,7 +38,7 @@ pub enum Error {
 }
 
 /// How to reach the router.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Endpoint {
     pub host: String,
     pub username: String,
@@ -88,6 +88,19 @@ pub fn tls_connector(ca_pem: &[u8]) -> Result<TlsConnector, Error> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     Ok(TlsConnector::from(Arc::new(config)))
+}
+
+// The password stays out of any debug output.
+impl std::fmt::Debug for Endpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Endpoint")
+            .field("host", &self.host)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("tls", &self.tls_ca.is_some())
+            .field("port", &self.port)
+            .finish()
+    }
 }
 
 impl Endpoint {
@@ -230,6 +243,18 @@ mod tests {
         assert_eq!(row["comment"], "a=b");
         assert_eq!(row["flag"], "");
         assert_eq!(row.len(), 3);
+    }
+
+    #[test]
+    fn debug_output_never_contains_the_password() {
+        let e = Endpoint {
+            host: "h".into(),
+            username: "u".into(),
+            password: "hunter2-secret".into(),
+            tls_ca: None,
+            port: None,
+        };
+        assert!(!format!("{e:?}").contains("hunter2-secret"));
     }
 
     #[test]

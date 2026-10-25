@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use mikrotik_dns_switcher::app::{AppState, router};
 use mikrotik_dns_switcher::config::Config;
@@ -68,9 +69,12 @@ async fn serve() -> Result<(), String> {
         settings: Settings {
             comment: config.comment,
             custom_dns: config.custom_dns,
+            max_managed_leases: config.max_managed_leases,
         },
         trust: config.trust,
         allowed_range: config.allowed_range,
+        allowed_hosts: config.allowed_hosts,
+        lock_wait: Duration::from_secs(15),
         router_lock: Mutex::new(()),
     });
     let addr = SocketAddr::from(([0, 0, 0, 0], config.port));

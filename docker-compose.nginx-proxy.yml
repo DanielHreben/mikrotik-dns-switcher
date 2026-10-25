@@ -5,7 +5,8 @@ services:
       service: mikrotik-dns-switcher
     networks:
       - nginx-proxy
-    ports: [] # Remove direct port exposure
+    # `ports: []` would be merged with the base file's list, leaving 3000 published.
+    ports: !reset [] # Remove direct port exposure (needs Docker Compose 2.24+)
     expose:
       - '3000'
     environment:
