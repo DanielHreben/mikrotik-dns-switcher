@@ -46,6 +46,9 @@ echo "VIRTUAL_HOST=dns-switcher.yourdomain.com" >> .env
 docker-compose -f docker-compose.nginx-proxy.yml up -d
 ```
 
+The image is a single static binary (about 2 MB; roughly 2 MB of RAM idle) with the
+front end embedded. It runs as a non-root user and needs no other files.
+
 ### Environment Variables
 
 Edit `.env` with your setup:
@@ -60,10 +63,21 @@ CUSTOM_DNS=192.168.1.100          # Your Pi-hole IP (or 8.8.8.8)
 TRUSTED_PROXY=172.19.0.100        # Trust X-Real-IP only from this proxy
 ALLOWED_RANGE=192.168.88.20-192.168.88.99   # Only manage these addresses (the DHCP pool)
 MIKROTIK_TLS_CA=/path/router-ca.crt         # Router CA: use API-SSL (8729), verify the router
+ALLOWED_HOSTS=dns-switcher.home             # Answer only to this name (comma-separated, no port)
+MAX_MANAGED_LEASES=32                       # Most leases the switcher may own at once (default 32)
 
 # Local development only:
 ALLOW_TARGET_IP=true              # Trust X-Real-IP from anyone (?ip= in the page)
 ```
+
+Every enabled device holds a permanent static lease, so the switcher refuses new ones
+(`429 LIMIT_REACHED`) once `MAX_MANAGED_LEASES` carry its comment. Without
+`ALLOWED_HOSTS` any `Host` header is served; set it so that a web page cannot reach the
+service under a name it controls (DNS rebinding). The health check is exempt. Responses
+carry `X-Frame-Options: DENY` and a restrictive `Content-Security-Policy`.
+
+`TRUSTED_PROXY` is an address: if it is a Docker address, pin the proxy's IP in its
+compose file so no other container can take it.
 
 Which device a request acts for: the `X-Real-IP` header when the request comes
 from `TRUSTED_PROXY` (or `ALLOW_TARGET_IP=true`), otherwise the connection's own
@@ -80,6 +94,11 @@ switcher's host, and the plain API off:
 /ip service disable api
 ```
 
+The API-SSL certificate must be an ordinary server certificate, not a CA: create it with
+`key-usage=digital-signature,key-encipherment,tls-server` and sign it with your own CA.
+Its subject-alt-name must match `MIKROTIK_HOST` (an `IP:` entry when that is an address),
+and `MIKROTIK_TLS_CA` is the CA's PEM file.
+
 The router user needs `read,write,api`. RouterOS can't limit that to DHCP, so
 keep the account's `address` restricted to the switcher's host.
 
@@ -89,16 +108,25 @@ by leaving `MIKROTIK_TLS_CA` unset.
 ## Development
 
 ```bash
-# Clone and install
 git clone https://github.com/DanielHreben/mikrotik-dns-switcher.git
 cd mikrotik-dns-switcher
-yarn install
 
-# Configure and run
+# Configure and run (the service reads its settings from the environment)
 cp .env.example .env
 nano .env
-yarn start
+set -a; . ./.env; set +a
+cargo run
+
+# Tests, lints
+cargo test
+cargo clippy --all-targets
+
+# End to end against a real RouterOS (a MikroTik CHR in QEMU; minutes without KVM)
+e2e/run-chr.sh
 ```
+
+The front end is in `public/` and is compiled into the binary, so changes there
+need a rebuild.
 
 ### API Testing
 
@@ -116,6 +144,7 @@ curl -H "X-Real-IP: 192.168.1.100" http://localhost:3000/api/dns
 | `GET` | `/api/dns` | Check DNS status |
 | `PUT` | `/api/dns` | Switch to custom DNS |
 | `DELETE` | `/api/dns` | Reset to default DNS |
+| `GET` | `/health` | Liveness (does not contact the router) |
 
 ## Troubleshooting
 
